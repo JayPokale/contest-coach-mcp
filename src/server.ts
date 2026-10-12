@@ -7,6 +7,21 @@ import { z } from 'zod';
 import { profile, recommendProblems, speakTime, upcomingContests, weakTopics } from './coach.js';
 
 const TZ = process.env.COACH_TIMEZONE ?? 'Asia/Kolkata';
+
+// Opt-in call log for demos: lets a companion screen show exactly which tools an agent called and their results.
+const RECORD_CALLS = process.env.COACH_RECORD_CALLS === '1';
+type RecordedCall = { at: number; tool: string; args: unknown; result: unknown };
+const recentCalls: RecordedCall[] = [];
+function record<A>(tool: string, handler: (args: A) => Promise<any>) {
+  return async (args: A) => {
+    const result = await handler(args);
+    if (RECORD_CALLS) {
+      recentCalls.push({ at: Date.now(), tool, args, result: result.structuredContent ?? null });
+      if (recentCalls.length > 50) recentCalls.shift();
+    }
+    return result;
+  };
+}
 const readOnly = { readOnlyHint: true, openWorldHint: true } as const;
 
 // Every tool answers twice: a short sentence an assistant can read aloud, and structured data.
@@ -35,7 +50,7 @@ export function buildServer(): McpServer {
       outputSchema: { speech: z.string(), contests: z.array(contestShape) },
       annotations: readOnly,
     },
-    async ({ within_days }) => {
+    record('upcoming_contests', async ({ within_days }) => {
       try {
         const contests = await upcomingContests(within_days);
         if (!contests.length) return reply(`No contests in the next ${within_days} days.`, { contests });
@@ -44,7 +59,7 @@ export function buildServer(): McpServer {
           `The next one is ${next.name} on ${next.platform}, ${speakTime(next.start, TZ)}, for ${next.durationMinutes / 60} hours.`;
         return reply(speech, { contests });
       } catch (e) { return fail(e); }
-    },
+    }),
   );
 
   server.registerTool(
@@ -59,7 +74,7 @@ export function buildServer(): McpServer {
       outputSchema: { speech: z.string(), codeforces: z.any().optional(), leetcode: z.any().optional() },
       annotations: readOnly,
     },
-    async ({ codeforces_handle, leetcode_username }) => {
+    record('my_ratings', async ({ codeforces_handle, leetcode_username }) => {
       if (!codeforces_handle && !leetcode_username) return fail('give a Codeforces handle or a LeetCode username');
       try {
         const p = await profile(codeforces_handle, leetcode_username);
@@ -72,7 +87,7 @@ export function buildServer(): McpServer {
         if (p.leetcode) parts.push(`On LeetCode your contest rating is ${p.leetcode.rating}, top ${p.leetcode.topPercentage} percent, after ${p.leetcode.contests} contests.`);
         return reply(parts.join(' '), p);
       } catch (e) { return fail(e); }
-    },
+    }),
   );
 
   server.registerTool(
@@ -87,13 +102,13 @@ export function buildServer(): McpServer {
       },
       annotations: readOnly,
     },
-    async ({ codeforces_handle, limit }) => {
+    record('weak_topics', async ({ codeforces_handle, limit }) => {
       try {
         const w = await weakTopics(codeforces_handle, limit);
         const speech = `Around your rating of ${w.rating}, the topics to work on are ${w.topics.map((t) => t.tag).join(', ')}.`;
         return reply(speech, { rating: w.rating, band: w.band, topics: w.topics });
       } catch (e) { return fail(e); }
-    },
+    }),
   );
 
   server.registerTool(
@@ -109,7 +124,7 @@ export function buildServer(): McpServer {
       outputSchema: { speech: z.string(), rating: z.number(), focus: z.array(z.string()), problems: z.array(problemShape) },
       annotations: readOnly,
     },
-    async ({ codeforces_handle, count, tag }) => {
+    record('practice_problems', async ({ codeforces_handle, count, tag }) => {
       try {
         const r = await recommendProblems(codeforces_handle, count, tag);
         const speech = r.problems.length
@@ -117,7 +132,7 @@ export function buildServer(): McpServer {
           : `I couldn't find unsolved problems for that topic near your rating.`;
         return reply(speech, r);
       } catch (e) { return fail(e); }
-    },
+    }),
   );
 
   server.registerTool(
@@ -129,7 +144,7 @@ export function buildServer(): McpServer {
       outputSchema: { speech: z.string(), nextContest: contestShape.optional(), focus: z.array(z.string()), problems: z.array(problemShape) },
       annotations: readOnly,
     },
-    async ({ codeforces_handle, problems }) => {
+    record('daily_plan', async ({ codeforces_handle, problems }) => {
       try {
         const [contests, rec] = await Promise.all([upcomingContests(7), recommendProblems(codeforces_handle, problems)]);
         const next = contests[0];
@@ -137,7 +152,7 @@ export function buildServer(): McpServer {
           (next ? ` Then rest up: ${next.name} starts ${speakTime(next.start, TZ)}.` : '');
         return reply(speech, { nextContest: next, focus: rec.focus, problems: rec.problems });
       } catch (e) { return fail(e); }
-    },
+    }),
   );
 
   server.registerPrompt(
@@ -172,6 +187,7 @@ const notAllowed = (_req: unknown, res: { status: (n: number) => { json: (b: unk
 app.get('/mcp', notAllowed);
 app.delete('/mcp', notAllowed);
 app.get('/health', (_req, res) => { res.json({ ok: true }); });
+if (RECORD_CALLS) app.get('/recent-calls', (req, res) => { res.json(recentCalls.filter((c) => c.at >= Number(req.query.since ?? 0))); });
 
 const port = Number(process.env.PORT ?? 3333);
 app.listen(port, () => console.log(`Contest Coach MCP server on http://${process.env.HOST ?? '127.0.0.1'}:${port}/mcp`));

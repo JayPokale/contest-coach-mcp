@@ -1,0 +1,119 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Contest Coach on Alexa+ (simulated)</title>
+<style>
+  :root { --bg: #0b1220; --panel: #121b2e; --ink: #e8eefc; --muted: #93a1bf; --ring: #18c7ff; --accent: #ffb020; --good: #3ddc97; --bad: #ff6b6b; }
+  * { box-sizing: border-box; }
+  body { margin: 0; min-height: 100vh; background: radial-gradient(1200px 600px at 50% -10%, #1b2a4a, var(--bg)); color: var(--ink); font: 17px/1.45 system-ui, -apple-system, "Segoe UI", sans-serif; display: grid; place-items: center; }
+  .device { width: min(1100px, 96vw); background: #05080f; border-radius: 28px; padding: 18px; box-shadow: 0 30px 80px #0009, inset 0 0 0 2px #1d2740; }
+  .screen { background: var(--panel); border-radius: 18px; min-height: 560px; padding: 26px 30px; display: grid; grid-template-rows: auto auto 1fr auto; gap: 16px; position: relative; overflow: hidden; }
+  .top { display: flex; justify-content: space-between; align-items: center; color: var(--muted); font-size: 14px; }
+  .brand b { color: var(--ink); }
+  .bar { position: absolute; left: 0; right: 0; bottom: 0; height: 6px; background: linear-gradient(90deg, transparent, var(--ring), transparent); opacity: 0; transition: opacity .3s; }
+  .listening .bar, .thinking .bar { opacity: 1; animation: sweep 1.2s linear infinite; background-size: 200% 100%; }
+  @keyframes sweep { from { background-position: 200% 0 } to { background-position: -200% 0 } }
+  .you { font-size: 15px; color: var(--muted); min-height: 22px; }
+  .you q { color: var(--ink); font-style: italic; }
+  .say { font-size: 30px; font-weight: 600; line-height: 1.3; min-height: 80px; }
+  .say.placeholder { color: var(--muted); font-weight: 400; font-size: 24px; }
+  .trace { display: flex; flex-wrap: wrap; gap: 8px; }
+  .chip { font: 13px ui-monospace, monospace; background: #0b2a3a; color: #8fe3ff; border: 1px solid #18c7ff55; padding: 4px 10px; border-radius: 999px; }
+  .cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 12px; align-content: start; }
+  .card { background: #0d1526; border: 1px solid #22304f; border-radius: 14px; padding: 14px 16px; }
+  .card h3 { margin: 0 0 6px; font-size: 13px; letter-spacing: .06em; text-transform: uppercase; color: var(--muted); }
+  .card .big { font-size: 22px; font-weight: 700; }
+  .card a { color: var(--ink); text-decoration: none; border-bottom: 1px dashed #5a6a8f; }
+  .tags { color: var(--muted); font-size: 13px; }
+  .delta.up { color: var(--good); } .delta.down { color: var(--bad); }
+  .meter { height: 8px; background: #22304f; border-radius: 99px; overflow: hidden; margin-top: 6px; }
+  .meter span { display: block; height: 100%; background: var(--accent); }
+  form { display: flex; gap: 10px; }
+  input { flex: 1; font: inherit; color: var(--ink); background: #0d1526; border: 1px solid #2a3a5e; border-radius: 12px; padding: 12px 14px; }
+  button { font: inherit; border: 0; border-radius: 12px; padding: 0 18px; cursor: pointer; background: var(--ring); color: #021018; font-weight: 700; }
+  button.mic { width: 52px; padding: 0; font-size: 22px; background: #0d1526; color: var(--ring); border: 1px solid #2a3a5e; }
+  .note { color: var(--muted); font-size: 12px; text-align: center; margin-top: 10px; }
+</style>
+</head>
+<body>
+<div class="device">
+  <div class="screen" id="screen">
+    <div class="top"><div class="brand"><b>alexa+</b> · simulated · Contest Coach MCP</div><div id="clock"></div></div>
+    <div class="you" id="you">Try: “Alexa, when's the next contest?”</div>
+    <div>
+      <div class="say placeholder" id="say">Ask Contest Coach about contests, your ratings, or what to practice.</div>
+      <div class="trace" id="trace"></div>
+      <div class="cards" id="cards" style="margin-top:14px"></div>
+    </div>
+    <form id="form">
+      <button type="button" class="mic" id="mic" title="Speak">🎙</button>
+      <input id="q" autocomplete="off" placeholder="Say or type a request…" aria-label="Request">
+      <button>Ask</button>
+    </form>
+    <div class="bar"></div>
+  </div>
+  <div class="note">The agent is GitHub Copilot CLI with the Contest Coach MCP server (spec 2025-11-25, Streamable HTTP); it chooses the tools itself.</div>
+</div>
+<script>
+const $ = (id) => document.getElementById(id);
+const screen = $('screen');
+const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+const when = (iso) => new Date(iso).toLocaleString('en-IN', { weekday: 'short', day: 'numeric', month: 'short', hour: 'numeric', minute: '2-digit' });
+setInterval(() => ($('clock').textContent = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })), 1000);
+
+function renderCards(cards) {
+  const out = [];
+  for (const { tool, data } of cards) {
+    if (!data) continue;
+    if (data.contests) for (const c of data.contests.slice(0, 3)) out.push(`<div class="card"><h3>${esc(c.platform)}</h3><div class="big">${esc(c.name)}</div><div class="tags">${when(c.start)} · ${c.durationMinutes / 60} h</div></div>`);
+    if (data.nextContest) { const c = data.nextContest; out.push(`<div class="card"><h3>Next contest</h3><div class="big">${esc(c.name)}</div><div class="tags">${when(c.start)}</div></div>`); }
+    if (data.codeforces) { const cf = data.codeforces, d = cf.recentChanges[0]; out.push(`<div class="card"><h3>Codeforces · ${esc(cf.handle)}</h3><div class="big">${cf.rating} <span class="tags">${esc(cf.rank)}</span></div>${d ? `<div class="delta ${d.delta >= 0 ? 'up' : 'down'}">${d.delta >= 0 ? '▲' : '▼'} ${Math.abs(d.delta)} in ${esc(d.contest)}</div>` : ''}</div>`); }
+    if (data.leetcode) { const lc = data.leetcode; out.push(`<div class="card"><h3>LeetCode · ${esc(lc.username)}</h3><div class="big">${lc.rating}</div><div class="tags">top ${lc.topPercentage}% · ${lc.contests} contests · ${lc.solved.hard} hard solved</div></div>`); }
+    if (data.topics) { const max = Math.max(...data.topics.map((t) => t.score)); for (const t of data.topics) out.push(`<div class="card"><h3>Work on</h3><div class="big">${esc(t.tag)}</div><div class="tags">${t.solved} solved · ${t.failedAttempts} failed attempts</div><div class="meter"><span style="width:${(100 * t.score / max).toFixed(0)}%"></span></div></div>`); }
+    if (data.problems) for (const p of data.problems) out.push(`<div class="card"><h3>Practice · ${p.rating}</h3><div class="big"><a href="${esc(p.url)}" target="_blank">${esc(p.name)}</a></div><div class="tags">${esc(p.tags.join(', '))}</div></div>`);
+  }
+  $('cards').innerHTML = out.join('');
+}
+
+function speak(text) {
+  if (!('speechSynthesis' in window)) return;
+  speechSynthesis.cancel();
+  const u = new SpeechSynthesisUtterance(text); u.rate = 1.02; speechSynthesis.speak(u);
+}
+
+async function ask(text) {
+  $('you').innerHTML = `You: <q>${esc(text)}</q>`;
+  $('say').className = 'say placeholder'; $('say').textContent = 'Thinking…';
+  $('trace').innerHTML = ''; $('cards').innerHTML = '';
+  screen.className = 'screen thinking';
+  try {
+    const r = await (await fetch('/ask', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ text }) })).json();
+    if (r.error) throw new Error(r.error);
+    $('say').className = 'say'; $('say').textContent = r.speech;
+    $('trace').innerHTML = r.calls.map((c) => `<span class="chip">MCP · ${esc(c.tool)}(${esc(Object.entries(c.args).map(([k, v]) => `${k}=${JSON.stringify(v)}`).join(', '))})</span>`).join('');
+    renderCards(r.cards);
+    speak(r.speech);
+  } catch (e) {
+    $('say').className = 'say'; $('say').textContent = 'Sorry, something went wrong: ' + e.message;
+  } finally {
+    screen.className = 'screen';
+  }
+}
+
+$('form').addEventListener('submit', (e) => { e.preventDefault(); const t = $('q').value.trim(); if (t) { ask(t); $('q').value = ''; } });
+
+const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+if (!SR) $('mic').disabled = true;
+$('mic').addEventListener('click', () => {
+  const rec = new SR(); rec.lang = 'en-IN';
+  screen.className = 'screen listening';
+  rec.onresult = (e) => ask(e.results[0][0].transcript);
+  rec.onend = () => { if (screen.className.includes('listening')) screen.className = 'screen'; };
+  rec.start();
+});
+window.ask = ask;
+</script>
+</body>
+</html>

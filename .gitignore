@@ -1,2 +1,5 @@
 node_modules/
 dist/
+tmp-server.log
+tmp-demo.log
+demo/build/
